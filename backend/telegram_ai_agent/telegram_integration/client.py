@@ -19,16 +19,20 @@ class TelegramClientManager:
     async def create_client(self):
         """Create and initialize a Telegram client for the account"""
         try:
-            # Use StringSession for persistence
-            if self.account.session_string:
-                session = StringSession(self.account.session_string)
-            else:
-                session = StringSession()
-                
+            # Create a new session or load existing one
+            session = StringSession(self.account.session_string) if self.account.session_string else StringSession()
+            
             self.client = TelegramClient(
                 session,
                 api_id=self.account.api_id,
-                api_hash=self.account.api_hash
+                api_hash=self.account.api_hash,
+                device_model="Python",
+                system_version="Windows",
+                app_version="1.0",
+                connection_retries=10,
+                retry_delay=2,
+                timeout=20,
+                request_retries=5
             )
             
             await self.client.connect()

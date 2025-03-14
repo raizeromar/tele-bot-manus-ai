@@ -11,6 +11,7 @@ class TelegramAccount(models.Model):
     is_active = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    last_code_request = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.phone_number} ({self.user.username})"

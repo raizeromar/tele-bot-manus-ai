@@ -45,3 +45,11 @@ class AccountGroupAssociationSerializer(serializers.ModelSerializer):
         model = AccountGroupAssociation
         fields = ['id', 'account', 'group', 'is_active', 'joined_at', 'last_collection']
         read_only_fields = ['id', 'joined_at', 'last_collection']
+
+class TelegramAuthenticateSerializer(serializers.Serializer):
+    phone_number = serializers.CharField(required=False, help_text="Optional: Override the stored phone number")
+    force_sms = serializers.BooleanField(required=False, default=False, help_text="Force SMS code instead of Telegram app")
+
+class TelegramVerifyCodeSerializer(serializers.Serializer):
+    code = serializers.CharField(required=True, help_text="The verification code received from Telegram")
+    phone_code_hash = serializers.CharField(required=True, help_text="The phone_code_hash received from the authenticate endpoint")
