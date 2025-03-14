@@ -8,12 +8,39 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'email']
         read_only_fields = ['id']
 
+class TelegramAccountSyncSerializer(serializers.Serializer):
+    """
+    Serializer for the sync account endpoint.
+    """
+    phone_number = serializers.CharField(required=True)
+    api_id = serializers.CharField(required=True)
+
+    def validate(self, data):
+        """
+        Check that the account exists and belongs to the user
+        """
+        try:
+            account = TelegramAccount.objects.get(
+                phone_number=data['phone_number'],
+                api_id=data['api_id'],
+                user=self.context['request'].user
+            )
+        except TelegramAccount.DoesNotExist:
+            raise serializers.ValidationError("Account not found with provided phone number and API ID")
+        return data
+
 class TelegramAccountSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
+    sync_url = serializers.HyperlinkedIdentityField(
+        view_name='telegram-account-sync',
+        lookup_url_kwarg='pk',
+        read_only=True
+    )
     
     class Meta:
         model = TelegramAccount
-        fields = ['id', 'user', 'phone_number', 'api_id', 'api_hash', 'is_active', 'created_at', 'updated_at']
+        fields = ['id', 'user', 'phone_number', 'api_id', 'api_hash', 'is_active', 
+                 'created_at', 'updated_at', 'sync_url']
         read_only_fields = ['id', 'user', 'is_active', 'created_at', 'updated_at']
         extra_kwargs = {
             'api_hash': {'write_only': True}
@@ -26,8 +53,8 @@ class TelegramAccountSerializer(serializers.ModelSerializer):
 class TelegramGroupSerializer(serializers.ModelSerializer):
     class Meta:
         model = TelegramGroup
-        fields = ['id', 'name', 'group_id', 'username', 'is_active', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'group_id', 'username', 'is_active']
+        read_only_fields = ['id']
 
 class TelegramMessageSerializer(serializers.ModelSerializer):
     group = TelegramGroupSerializer(read_only=True)

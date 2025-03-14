@@ -43,6 +43,7 @@ Base URL: `/api/telegram/accounts/`
 | `/{id}/` | DELETE | Delete an account | Yes |
 | `/{id}/authenticate/` | POST | Start Telegram authentication process | Yes |
 | `/{id}/verify_code/` | POST | Verify Telegram authentication code | Yes |
+| `/{id}/sync/` | POST | Sync groups and channels from Telegram account | Yes |
 
 ### Group Management
 **File**: `telegram_integration/views/TelegramGroupViewSet`
@@ -233,6 +234,45 @@ Response:
     }
 }
 ```
+
+### Account Sync
+
+```json
+// POST /api/telegram/accounts/{id}/sync/
+Request:
+{
+    "phone_number": "+963937459456",
+    "api_id": "29277175"
+}
+
+Response:
+{
+    "status": "success",
+    "message": "Successfully synced account.",
+    "details": {
+        "groups_added": 5,
+        "total_chats": 10
+    }
+}
+
+// Error Response (Invalid Account)
+{
+    "error": "Account not found with provided phone number and API ID"
+}
+
+// Error Response (Not Authenticated)
+{
+    "error": "Account not authenticated"
+}
+```
+
+The sync endpoint allows you to:
+- Fetch all groups and channels from a Telegram account
+- Automatically create or update groups in the database
+- Create associations between the account and groups
+- Track the number of new groups added
+
+Note: The account must be authenticated before syncing can occur.
 
 ## Error Responses
 

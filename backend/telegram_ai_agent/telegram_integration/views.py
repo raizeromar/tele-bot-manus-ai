@@ -10,7 +10,8 @@ from .serializers import (
     TelegramMessageSerializer,
     AccountGroupAssociationSerializer,
     TelegramAuthenticateSerializer,
-    TelegramVerifyCodeSerializer
+    TelegramVerifyCodeSerializer,
+    TelegramAccountSyncSerializer
 )
 from .client import TelegramClientManager
 import asyncio
@@ -169,6 +170,81 @@ class TelegramAccountViewSet(viewsets.ModelViewSet):
         finally:
             loop.close()
 
+    @action(detail=True, 
+            methods=['post'], 
+            url_path='sync', 
+            url_name='sync',
+            serializer_class=TelegramAccountSyncSerializer)
+    def sync_account(self, request, pk=None):
+        """
+        Sync all Telegram groups, channels, and chats from this account.
+        """
+        try:
+            account = self.get_object()
+            
+            # Create client manager
+            client_manager = TelegramClientManager(account)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            try:
+                # Connect and authenticate client
+                client = loop.run_until_complete(client_manager.create_client())
+                
+                if not loop.run_until_complete(client.is_user_authorized()):
+                    return Response({
+                        'error': 'Account not authenticated'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Get all dialogs (groups, channels, chats)
+                dialogs = loop.run_until_complete(client.get_dialogs())
+                
+                groups_added = 0
+                
+                for dialog in dialogs:
+                    entity = dialog.entity
+                    
+                    if dialog.is_group or dialog.is_channel:
+                        # Create or update the group/channel
+                        group, created = TelegramGroup.objects.update_or_create(
+                            group_id=str(entity.id),
+                            defaults={
+                                'name': entity.title,
+                                'username': getattr(entity, 'username', None),
+                                'is_active': True
+                            }
+                        )
+                        
+                        # Create or update association
+                        AccountGroupAssociation.objects.get_or_create(
+                            account=account,
+                            group=group,
+                            defaults={'is_active': True}
+                        )
+                        
+                        if created:
+                            groups_added += 1
+                
+                return Response({
+                    'status': 'success',
+                    'message': f'Successfully synced account.',
+                    'details': {
+                        'groups_added': groups_added,
+                        'total_chats': len(dialogs)
+                    }
+                })
+                
+            finally:
+                # Always disconnect client and close loop
+                loop.run_until_complete(client_manager.disconnect())
+                loop.close()
+                
+        except Exception as e:
+            logger.error(f"Account sync error: {str(e)}")
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
 class TelegramGroupViewSet(viewsets.ModelViewSet):
     """ViewSet for managing Telegram groups"""
     serializer_class = TelegramGroupSerializer
@@ -306,10 +382,15 @@ class TelegramGroupViewSet(viewsets.ModelViewSet):
         finally:
             loop.close()
 
-    @action(detail=False, methods=['post'])
-    async def sync_groups(self, request):
+    @action(detail=False, methods=['post'], url_path='sync-groups', url_name='sync_groups')
+    def sync_groups(self, request):
         """
-        Endpoint to sync all groups the user is already a member of
+        Sync all Telegram groups that the user is already a member of.
+        
+        Expected payload:
+        {
+            "account_id": "integer - ID of your Telegram account"
+        }
         """
         account_id = request.data.get('account_id')
         
@@ -346,7 +427,7 @@ class TelegramGroupViewSet(viewsets.ModelViewSet):
             for dialog in dialogs:
                 if dialog.is_group or dialog.is_channel:
                     group, created = TelegramGroup.objects.update_or_create(
-                        group_id=dialog.entity.id,
+                        group_id=str(dialog.entity.id),  # Convert to string to ensure compatibility
                         defaults={
                             'name': dialog.entity.title,
                             'username': getattr(dialog.entity, 'username', None),
@@ -355,7 +436,7 @@ class TelegramGroupViewSet(viewsets.ModelViewSet):
                     )
                     
                     # Create association if it doesn't exist
-                    AccountGroupAssociation.objects.get_or_create(
+                    association, assoc_created = AccountGroupAssociation.objects.get_or_create(
                         account=account,
                         group=group,
                         defaults={'is_active': True}
@@ -369,7 +450,8 @@ class TelegramGroupViewSet(viewsets.ModelViewSet):
             
             return Response({
                 'message': f'Successfully synced groups. Added {groups_added} new groups.',
-                'groups_added': groups_added
+                'groups_added': groups_added,
+                'total_groups': len(dialogs)
             })
             
         except Exception as e:
