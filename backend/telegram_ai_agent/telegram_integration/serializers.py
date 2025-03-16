@@ -61,7 +61,8 @@ class TelegramMessageSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = TelegramMessage
-        fields = ['id', 'group', 'message_id', 'sender_id', 'sender_name', 'text', 'date', 'is_processed', 'created_at']
+        fields = ['id', 'group', 'message_id', 'sender_id', 'sender_name', 
+                 'sender_username', 'text', 'date', 'is_processed', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 class AccountGroupAssociationSerializer(serializers.ModelSerializer):

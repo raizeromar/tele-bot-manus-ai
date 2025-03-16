@@ -208,6 +208,20 @@ class TelegramClientManager:
                 ).exists()
 
             @sync_to_async
+            def get_message(message_id):
+                try:
+                    return TelegramMessage.objects.get(
+                        group=group,
+                        message_id=message_id
+                    )
+                except TelegramMessage.DoesNotExist:
+                    return None
+
+            @sync_to_async
+            def update_message(message_obj):
+                message_obj.save()
+
+            @sync_to_async
             def create_message(msg_data):
                 return TelegramMessage.objects.create(**msg_data)
 
@@ -231,7 +245,13 @@ class TelegramClientManager:
                         continue
 
                     # Check if message exists
-                    if await message_exists(message.id):
+                    exists = await message_exists(message.id)
+                    if exists:
+                        # Update existing message with username
+                        message_obj = await get_message(message.id)
+                        if message_obj and not message_obj.sender_username:
+                            message_obj.sender_username = sender_username
+                            await update_message(message_obj)
                         continue
 
                     # Prepare message data
@@ -242,11 +262,13 @@ class TelegramClientManager:
                         sender_id = str(message.sender_id)
                         if hasattr(message, 'sender') and message.sender:
                             sender = message.sender
-                            sender_name = (getattr(sender, 'first_name', '') + ' ' + 
-                                         getattr(sender, 'last_name', '')).strip() or \
-                                         getattr(sender, 'username', 'Unknown')
+                            first_name = getattr(sender, 'first_name', '') or ''
+                            last_name = getattr(sender, 'last_name', '') or ''
+                            sender_name = f"{first_name} {last_name}".strip() or getattr(sender, 'username', 'Unknown')
+                            sender_username = getattr(sender, 'username', None)
                         else:
                             sender_name = f"User{message.sender_id}"
+                            sender_username = None
 
                     # Handle message text and media
                     message_text = message.text or ''
@@ -263,6 +285,7 @@ class TelegramClientManager:
                         'message_id': message.id,
                         'sender_id': sender_id,
                         'sender_name': sender_name,
+                        'sender_username': sender_username,  # Add username to message data
                         'text': message_text,
                         'date': message.date,
                         'is_processed': False
@@ -287,100 +310,120 @@ class TelegramClientManager:
             
     async def sync_historical_messages(self, group, limit=1000):
         """
-        Sync historical messages from a Telegram group, including messages that existed
-        before the account was added to the system.
+        Sync historical messages from a Telegram group
         """
         try:
             if not self.client or not await self.client.is_user_authorized():
                 logger.error("Client not authenticated")
                 return 0
             
-            logger.info(f"Starting sync for group: {group.name} (ID: {group.group_id})")
-        
-            try:
-                # Convert group_id to integer if it's stored as string
-                group_id = int(group.group_id)
-                # Get the group entity
-                entity = await self.client.get_entity(group_id)
-                logger.info(f"Successfully got entity: {entity.title}")
+            # Get the group entity
+            entity = await self.get_entity_by_id(group.group_id)
             
-            except ValueError as ve:
-                logger.error(f"Invalid group ID format: {group.group_id}")
+            if not entity:
+                logger.error(f"Could not resolve entity for group ID: {group.group_id}")
                 return 0
-            except Exception as e:
-                logger.error(f"Error getting entity: {str(e)}")
-                return 0
+                
+            logger.info(f"Successfully got entity: {entity.title}")
 
-            try:
-                # Get messages with more flexible parameters
-                logger.info(f"Fetching messages from group {entity.title}")
-                messages = await self.client.get_messages(
-                    entity,
-                    limit=limit,
-                    reverse=True  # Start from oldest messages
-                )
-                logger.info(f"Found {len(messages)} messages")
+            # Async wrapper for database operations
+            @sync_to_async
+            def message_exists(message_id):
+                return TelegramMessage.objects.filter(
+                    group=group,
+                    message_id=message_id
+                ).exists()
+
+            @sync_to_async
+            def get_message(message_id):
+                try:
+                    return TelegramMessage.objects.get(
+                        group=group,
+                        message_id=message_id
+                    )
+                except TelegramMessage.DoesNotExist:
+                    return None
+
+            @sync_to_async
+            def update_message(message_obj):
+                message_obj.save()
+
+            @sync_to_async
+            def create_message(msg_data):
+                return TelegramMessage.objects.create(**msg_data)
+
+            # Get messages
+            messages = await self.client.get_messages(
+                entity,
+                limit=limit,
+                reverse=True
+            )
             
-            except Exception as e:
-                logger.error(f"Error fetching messages: {str(e)}")
-                return 0
-
-            # Save messages to database
             count = 0
             for message in messages:
                 try:
-                    # Skip empty messages but process media messages
                     if not message.text and not message.media:
                         continue
+
+                    # Check if message exists
+                    exists = await message_exists(message.id)
+                    if exists:
+                        message_obj = await get_message(message.id)
+                        if message_obj and not message_obj.sender_username:
+                            message_obj.sender_username = sender_username
+                            await update_message(message_obj)
+                        continue
+
+                    # Handle sender information
+                    sender_name = 'Unknown'
+                    sender_id = None
+                    sender_username = None
                     
-                    # Check if message already exists
-                    exists = TelegramMessage.objects.filter(
-                        group=group,
-                        message_id=message.id
-                    ).exists()
-                
-                    if not exists:
-                        # Get sender info
-                        sender_name = 'Unknown'
-                        if message.sender_id:
-                            try:
-                                sender = await self.client.get_entity(message.sender_id)
-                                sender_name = getattr(sender, 'first_name', '') + ' ' + getattr(sender, 'last_name', '')
-                                sender_name = sender_name.strip() or getattr(sender, 'username', 'Unknown')
-                            except Exception as e:
-                                logger.warning(f"Could not get sender info: {str(e)}")
+                    if hasattr(message, 'sender_id') and message.sender_id:
+                        sender_id = str(message.sender_id)
+                        if hasattr(message, 'sender') and message.sender:
+                            sender = message.sender
+                            first_name = getattr(sender, 'first_name', '') or ''
+                            last_name = getattr(sender, 'last_name', '') or ''
+                            sender_name = f"{first_name} {last_name}".strip() or getattr(sender, 'username', 'Unknown')
+                            sender_username = getattr(sender, 'username', None)
+                        else:
+                            sender_name = f"User{message.sender_id}"
+
+                    # Handle message text and media
+                    message_text = message.text or ''
+                    if message.media:
+                        media_type = type(message.media).__name__
+                        if message_text:
+                            message_text += f" [Media: {media_type}]"
+                        else:
+                            message_text = f"[Media: {media_type}]"
+
+                    # Create message
+                    msg_data = {
+                        'group': group,
+                        'message_id': message.id,
+                        'sender_id': sender_id,
+                        'sender_name': sender_name,
+                        'sender_username': sender_username,
+                        'text': message_text,
+                        'date': message.date,
+                        'is_processed': False
+                    }
                     
-                        # Handle message text
-                        message_text = message.text or ''
-                        if message.media:
-                            media_type = type(message.media).__name__
-                            if message_text:
-                                message_text += f" [Media: {media_type}]"
-                            else:
-                                message_text = f"[Media: {media_type}]"
-                    
-                        # Save message
-                        TelegramMessage.objects.create(
-                            group=group,
-                            message_id=message.id,
-                            sender_id=str(message.sender_id) if message.sender_id else None,
-                            sender_name=sender_name,
-                            text=message_text,
-                            date=message.date,
-                            is_processed=False
-                        )
-                        count += 1
-                    
-                        if count % 100 == 0:
-                            logger.info(f"Synced {count} messages so far from {group.name}")
-                
+                    await create_message(msg_data)
+                    count += 1
+
+                    if count % 50 == 0:
+                        logger.info(f"Processed {count} new messages so far")
+
                 except Exception as msg_e:
                     logger.error(f"Error processing message {message.id}: {str(msg_e)}")
                     continue
-        
+
             logger.info(f"Successfully synced {count} messages from {group.name}")
             return count
-        
+
         except Exception as e:
             logger.error(f"Error in sync_historical_messages: {str(e)}")
             return 0

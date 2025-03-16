@@ -34,6 +34,7 @@ class TelegramMessage(models.Model):
     message_id = models.BigIntegerField()
     sender_id = models.BigIntegerField(null=True, blank=True)
     sender_name = models.CharField(max_length=255, null=True, blank=True)
+    sender_username = models.CharField(max_length=255, null=True, blank=True)  # New field
     text = models.TextField()
     date = models.DateTimeField()
     is_processed = models.BooleanField(default=False)

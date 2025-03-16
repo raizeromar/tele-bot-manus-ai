@@ -57,9 +57,10 @@ Base URL: `/api/telegram/groups/`
 | `/{id}/` | PUT/PATCH | Update group details | Yes |
 | `/{id}/` | DELETE | Leave/Delete a group | Yes |
 | `/join/` | POST | Join a new Telegram group | Yes |
-| `/{id}/collect_messages/` | POST | Manually trigger message collection | Yes |
+| `/{id}/collect-messages/` | POST | Manually trigger message collection | Yes |
+| `/{id}/sync-messages/` | POST | Manually trigger message collection | Yes |
 
-#### Collection Parameters for `/{id}/collect_messages/`
+#### Collection Parameters for `/{id}/collect-messages/` `/{id}/sync-messages/`
 
 | Parameter | Type | Required | Default | Options |
 |-----------|------|----------|---------|----------|
