@@ -80,3 +80,47 @@ class TelegramAuthenticateSerializer(serializers.Serializer):
 class TelegramVerifyCodeSerializer(serializers.Serializer):
     code = serializers.CharField(required=True, help_text="The verification code received from Telegram")
     phone_code_hash = serializers.CharField(required=True, help_text="The phone_code_hash received from the authenticate endpoint")
+
+class MessageCollectionSerializer(serializers.Serializer):
+    account_id = serializers.IntegerField(
+        required=True,
+        error_messages={
+            'required': 'Please provide the account_id of your Telegram account.',
+            'invalid': 'account_id must be a valid integer.',
+            'null': 'account_id cannot be null.'
+        },
+        help_text="ID of the Telegram account to use for collection"
+    )
+    collection_type = serializers.ChoiceField(
+        choices=['all', 'last_week', 'since_date'],
+        required=True,
+        error_messages={
+            'required': 'Please specify a collection_type: "all", "last_week", or "since_date".',
+            'invalid_choice': 'Invalid collection_type. Choose from: "all", "last_week", or "since_date".'
+        },
+        help_text="Type of collection: 'all' for all messages, 'last_week' for past 7 days, 'since_date' for messages since specific date"
+    )
+    since_date = serializers.DateField(
+        required=False,
+        format="%Y-%m-%d",
+        error_messages={
+            'invalid': 'Invalid date format. Use YYYY-MM-DD (e.g., 2024-02-01).',
+            'date': 'Invalid date format. Use YYYY-MM-DD (e.g., 2024-02-01).'
+        },
+        help_text="Required when collection_type is 'since_date'. Format: YYYY-MM-DD"
+    )
+    limit = serializers.IntegerField(
+        required=False,
+        default=1000,
+        error_messages={
+            'invalid': 'limit must be a valid integer.',
+        },
+        help_text="Maximum number of messages to collect"
+    )
+
+    def validate(self, data):
+        if data.get('collection_type') == 'since_date' and 'since_date' not in data:
+            raise serializers.ValidationError({
+                "since_date": "since_date field is required when collection_type is 'since_date'. Please provide a date in YYYY-MM-DD format."
+            })
+        return data

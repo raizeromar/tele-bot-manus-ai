@@ -11,12 +11,14 @@ from .serializers import (
     AccountGroupAssociationSerializer,
     TelegramAuthenticateSerializer,
     TelegramVerifyCodeSerializer,
-    TelegramAccountSyncSerializer
+    TelegramAccountSyncSerializer,
+    MessageCollectionSerializer
 )
 from .client import TelegramClientManager
 import asyncio
 import logging
 from django.utils import timezone
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -318,21 +320,24 @@ class TelegramGroupViewSet(viewsets.ModelViewSet):
         finally:
             loop.close()
     
-    @action(detail=True, methods=['post'])
+    @action(detail=True, 
+            methods=['post'],
+            serializer_class=MessageCollectionSerializer)
     def collect_messages(self, request, pk=None):
         """
-        Endpoint to manually collect messages from a group
+        Collect messages from a Telegram group based on specified criteria
         """
         group = self.get_object()
-        account_id = request.data.get('account_id')
-        limit = int(request.data.get('limit', 100))
+        serializer = self.get_serializer(data=request.data)
         
-        if not account_id:
-            return Response({
-                'error': 'Account ID is required'
-            }, status=status.HTTP_400_BAD_REQUEST)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
-        # Get the account
+        validated_data = serializer.validated_data
+        account_id = validated_data['account_id']
+        collection_type = validated_data['collection_type']
+        limit = validated_data.get('limit', 1000)
+        
         try:
             account = TelegramAccount.objects.get(id=account_id, user=request.user)
         except TelegramAccount.DoesNotExist:
@@ -340,23 +345,20 @@ class TelegramGroupViewSet(viewsets.ModelViewSet):
                 'error': 'Account not found'
             }, status=status.HTTP_404_NOT_FOUND)
         
-        # Check if the account is associated with the group
-        try:
-            association = AccountGroupAssociation.objects.get(account=account, group=group)
-        except AccountGroupAssociation.DoesNotExist:
-            return Response({
-                'error': 'Account is not associated with this group'
-            }, status=status.HTTP_400_BAD_REQUEST)
+        # Check association
+        association = get_object_or_404(
+            AccountGroupAssociation,
+            account=account,
+            group=group
+        )
         
-        # Create a client manager
+        # Setup client
         client_manager = TelegramClientManager(account)
-        
-        # Collect messages asynchronously
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         try:
-            # Connect and authenticate the client
+            # Create and connect client
             client = loop.run_until_complete(client_manager.create_client())
             
             if not loop.run_until_complete(client.is_user_authorized()):
@@ -365,21 +367,29 @@ class TelegramGroupViewSet(viewsets.ModelViewSet):
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             # Collect messages
-            count = loop.run_until_complete(client_manager.collect_messages(group, limit))
+            count = loop.run_until_complete(client_manager.collect_messages(group, limit=limit))
             
-            # Disconnect the client
-            loop.run_until_complete(client_manager.disconnect())
+            # Update last collection timestamp
+            association.last_collection = timezone.now()
+            association.save()
             
             return Response({
-                'message': f'Successfully collected {count} new messages',
+                'message': f'Successfully collected {count} messages',
+                'collection_type': collection_type,
                 'count': count
             })
+            
         except Exception as e:
-            logger.error(f"Collect messages error: {str(e)}")
+            logger.error(f"Message collection error: {str(e)}")
             return Response({
                 'error': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
         finally:
+            # Cleanup
+            try:
+                loop.run_until_complete(client_manager.disconnect())
+            except Exception as e:
+                logger.error(f"Error disconnecting client: {str(e)}")
             loop.close()
 
     @action(detail=False, methods=['post'], url_path='sync-groups', url_name='sync_groups')
@@ -460,6 +470,96 @@ class TelegramGroupViewSet(viewsets.ModelViewSet):
                 'error': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
         finally:
+            loop.close()
+
+    @action(detail=True, 
+            methods=['post'],
+            url_path='sync-messages',
+            url_name='sync_messages',
+            serializer_class=MessageCollectionSerializer)
+    def sync_messages(self, request, pk=None):
+        """
+        Sync historical messages from a Telegram group
+        """
+        group = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        validated_data = serializer.validated_data
+        account_id = validated_data['account_id']
+        limit = validated_data.get('limit', 1000)
+        
+        try:
+            account = TelegramAccount.objects.get(id=account_id, user=request.user)
+        except TelegramAccount.DoesNotExist:
+            return Response({
+                'error': 'Account not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check association
+        try:
+            association = AccountGroupAssociation.objects.get(
+                account=account,
+                group=group
+            )
+        except AccountGroupAssociation.DoesNotExist:
+            return Response({
+                'error': 'No association found between this account and group'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Setup client
+        client_manager = TelegramClientManager(account)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            # Create and connect client
+            client = loop.run_until_complete(client_manager.create_client())
+            
+            if not loop.run_until_complete(client.is_user_authorized()):
+                return Response({
+                    'error': 'Account not authenticated'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            logger.info(f"Starting message sync for group {group.name} using account {account.phone_number}")
+            
+            # Sync historical messages
+            count = loop.run_until_complete(
+                client_manager.sync_historical_messages(group, limit=limit)
+            )
+            
+            if count == 0:
+                return Response({
+                    'warning': 'No new messages were synced. This could mean either all messages are already synced or there was an issue accessing the group.',
+                    'group_id': group.group_id,
+                    'group_name': group.name
+                }, status=status.HTTP_200_OK)
+            
+            # Update last collection timestamp
+            association.last_collection = timezone.now()
+            association.save()
+            
+            return Response({
+                'message': f'Successfully synced {count} historical messages',
+                'count': count,
+                'group_name': group.name,
+                'group_id': group.group_id
+            })
+            
+        except Exception as e:
+            logger.error(f"Message sync error: {str(e)}")
+            return Response({
+                'error': str(e),
+                'group_id': group.group_id,
+                'group_name': group.name
+            }, status=status.HTTP_400_BAD_REQUEST)
+        finally:
+            try:
+                loop.run_until_complete(client_manager.disconnect())
+            except Exception as e:
+                logger.error(f"Error disconnecting client: {str(e)}")
             loop.close()
 
 class TelegramMessageViewSet(viewsets.ReadOnlyModelViewSet):
