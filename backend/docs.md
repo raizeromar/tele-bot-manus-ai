@@ -59,6 +59,17 @@ Base URL: `/api/telegram/groups/`
 | `/join/` | POST | Join a new Telegram group | Yes |
 | `/{id}/collect_messages/` | POST | Manually trigger message collection | Yes |
 
+#### Collection Parameters for `/{id}/collect_messages/`
+
+| Parameter | Type | Required | Default | Options |
+|-----------|------|----------|---------|----------|
+| account_id | integer | Yes | - | - |
+| collection_type | string | Yes | - | all, last_week, since_date |
+| since_date | date | No* | - | YYYY-MM-DD format |
+| limit | integer | No | 1000 | - |
+
+*Required only when collection_type is 'since_date'
+
 ### Message Management
 **File**: `telegram_integration/views/TelegramMessageViewSet`
 Base URL: `/api/telegram/messages/`
