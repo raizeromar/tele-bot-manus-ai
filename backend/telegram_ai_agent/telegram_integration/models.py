@@ -30,12 +30,21 @@ class TelegramGroup(models.Model):
 
 class TelegramMessage(models.Model):
     """Model to store messages collected from Telegram groups"""
+    MESSAGE_TYPES = [
+        ('TEXT', 'Text'),
+        ('VOICE', 'Voice Message'),
+        ('DOCUMENT', 'Document'),
+        ('PHOTO', 'Photo'),
+        ('OTHER', 'Unsupported Type')  # Added OTHER type
+    ]
+    
     group = models.ForeignKey(TelegramGroup, on_delete=models.CASCADE, related_name='messages')
     message_id = models.BigIntegerField()
     sender_id = models.BigIntegerField(null=True, blank=True)
     sender_name = models.CharField(max_length=255, null=True, blank=True)
-    sender_username = models.CharField(max_length=255, null=True, blank=True)  # New field
+    sender_username = models.CharField(max_length=255, null=True, blank=True)
     text = models.TextField()
+    message_type = models.CharField(max_length=10, choices=MESSAGE_TYPES, default='TEXT')
     date = models.DateTimeField()
     is_processed = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -58,12 +58,39 @@ class TelegramGroupSerializer(serializers.ModelSerializer):
 
 class TelegramMessageSerializer(serializers.ModelSerializer):
     group = TelegramGroupSerializer(read_only=True)
+    message_type_display = serializers.CharField(source='get_message_type_display', read_only=True)
     
     class Meta:
         model = TelegramMessage
-        fields = ['id', 'group', 'message_id', 'sender_id', 'sender_name', 
-                 'sender_username', 'text', 'date', 'is_processed', 'created_at']
+        fields = [
+            'id', 
+            'group', 
+            'message_id', 
+            'sender_id', 
+            'sender_name', 
+            'sender_username', 
+            'text', 
+            'message_type',
+            'message_type_display',  # This will show the human-readable type
+            'date', 
+            'is_processed', 
+            'created_at'
+        ]
         read_only_fields = ['id', 'created_at']
+        extra_kwargs = {
+            'message_type': {'required': False}  # Make it optional in case of regular text messages
+        }
+
+    def validate_message_type(self, value):
+        """
+        Validate that the message type is one of the allowed choices
+        """
+        allowed_types = dict(TelegramMessage.MESSAGE_TYPES).keys()
+        if value not in allowed_types:
+            raise serializers.ValidationError(
+                f"Invalid message type. Must be one of: {', '.join(allowed_types)}"
+            )
+        return value
 
 class AccountGroupAssociationSerializer(serializers.ModelSerializer):
     account = TelegramAccountSerializer(read_only=True)
