@@ -264,19 +264,18 @@ class TelegramClientManager:
                             message_type = 'OTHER'
                             message_text = self.process_unsupported_media(message.media)
 
-                    msg_data = {
-                        'group': group,
-                        'message_id': message.id,
-                        'sender_id': sender_id,
-                        'sender_name': sender_name,
-                        'sender_username': sender_username,
-                        'text': message_text,
-                        'message_type': message_type,
-                        'date': message.date,
-                        'is_processed': False
-                    }
-                    
-                    await create_message(msg_data)
+                    # Create or update the message
+                    TelegramMessage.objects.create(
+                        group=group,
+                        message_id=message.id,
+                        sender_id=sender_id,
+                        sender_name=sender_name,
+                        sender_username=sender_username,
+                        text=message_text,
+                        message_type=message_type,  # Make sure this line exists
+                        date=message.date,
+                        is_processed=False
+                    )
                     count += 1
 
                     if count % 50 == 0:
@@ -293,41 +292,33 @@ class TelegramClientManager:
             logger.error(f"Error in collect_messages: {str(e)}")
             return 0
 
+    async def get_sender_info(self, message):
+        """Get sender information from a message"""
+        try:
+            if message.sender_id:
+                sender = await self.client.get_entity(message.sender_id)
+                return {
+                    'id': sender.id,
+                    'name': f"{getattr(sender, 'first_name', '')} {getattr(sender, 'last_name', '')}".strip(),
+                    'username': getattr(sender, 'username', None)
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting sender info: {str(e)}")
+            return None
+
     async def sync_historical_messages(self, group, limit=1000):
         """Sync historical messages from a Telegram group"""
         try:
             if not self.client or not await self.client.is_user_authorized():
                 logger.error("Client not authenticated")
                 return 0
-            
+
             entity = await self.get_entity_by_id(group.group_id)
             
             if not entity:
                 logger.error(f"Could not resolve entity for group ID: {group.group_id}")
                 return 0
-                
-            logger.info(f"Successfully got entity: {entity.title}")
-
-            @sync_to_async
-            def message_exists(message_id):
-                return TelegramMessage.objects.filter(
-                    group=group,
-                    message_id=message_id
-                ).exists()
-
-            @sync_to_async
-            def get_message(message_id):
-                try:
-                    return TelegramMessage.objects.get(
-                        group=group,
-                        message_id=message_id
-                    )
-                except TelegramMessage.DoesNotExist:
-                    return None
-
-            @sync_to_async
-            def update_message(message_obj):
-                message_obj.save()
 
             @sync_to_async
             def create_message(msg_data):
@@ -345,42 +336,26 @@ class TelegramClientManager:
                     if not message.text and not message.media:
                         continue
 
-                    exists = await message_exists(message.id)
-                    if exists:
-                        message_obj = await get_message(message.id)
-                        if message_obj and not message_obj.sender_username:
-                            message_obj.sender_username = sender_username
-                            await update_message(message_obj)
-                        continue
-
-                    sender_name = 'Unknown'
-                    sender_id = None
-                    sender_username = None
-                    
-                    if hasattr(message, 'sender_id') and message.sender_id:
-                        sender_id = str(message.sender_id)
-                        if hasattr(message, 'sender') and message.sender:
-                            sender = message.sender
-                            first_name = getattr(sender, 'first_name', '') or ''
-                            last_name = getattr(sender, 'last_name', '') or ''
-                            sender_name = f"{first_name} {last_name}".strip() or getattr(sender, 'username', 'Unknown')
-                            sender_username = getattr(sender, 'username', None)
-                        else:
-                            sender_name = f"User{message.sender_id}"
+                    # Get sender info
+                    sender = await self.get_sender_info(message)
+                    sender_id = sender.get('id') if sender else None
+                    sender_name = sender.get('name') if sender else None
+                    sender_username = sender.get('username') if sender else None
 
                     message_text = message.text or ''
                     message_type = 'TEXT'
 
                     if message.media:
-                        if isinstance(message.media, MessageMediaDocument) and hasattr(message.media.document, 'attributes'):
-                            for attr in message.media.document.attributes:
-                                if isinstance(attr, DocumentAttributeAudio) and attr.voice:
-                                    message_type = 'VOICE'
-                                    message_text = self.process_voice_message(message)
-                                    break
-                            if message_type == 'TEXT':  # If not voice, then it's a regular document
-                                message_type = 'DOCUMENT'
-                                message_text = self.process_document(message)
+                        if isinstance(message.media, MessageMediaDocument):
+                            if hasattr(message.media.document, 'attributes'):
+                                for attr in message.media.document.attributes:
+                                    if isinstance(attr, DocumentAttributeAudio) and attr.voice:
+                                        message_type = 'VOICE'
+                                        message_text = self.process_voice_message(message)
+                                        break
+                                if message_type == 'TEXT':  # If not voice, then it's a regular document
+                                    message_type = 'DOCUMENT'
+                                    message_text = self.process_document(message)
                         elif isinstance(message.media, MessageMediaPhoto):
                             message_type = 'PHOTO'
                             message_text = self.process_photo(message)
@@ -388,6 +363,7 @@ class TelegramClientManager:
                             message_type = 'OTHER'
                             message_text = self.process_unsupported_media(message.media)
 
+                    # Create message using sync_to_async
                     msg_data = {
                         'group': group,
                         'message_id': message.id,
@@ -395,6 +371,7 @@ class TelegramClientManager:
                         'sender_name': sender_name,
                         'sender_username': sender_username,
                         'text': message_text,
+                        'message_type': message_type,
                         'date': message.date,
                         'is_processed': False
                     }
